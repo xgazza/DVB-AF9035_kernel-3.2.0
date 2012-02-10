@@ -1,0 +1,13 @@
+Driver for AF9035 dvb-t usb dongle (>=3.2.0 kernel version)
+
+for:
+
+   Avermedia AVerTV A835 HD (ID 07ca:b835)
+   Avermedia AVerTV A835 HD PRO (ID 07ca:a835)
+   Avermedia AverTV A835 Green HD (ID 07ca:a835)
+
+and:
+
+   TerraTec Cinergy T Stick (ID 0ccd:0093)
+   TerraTec Cinergy T Stick 2 (ID 0ccd:00aa)
+   Avermedia AverTV A825 (ID 07ca:0825) 
