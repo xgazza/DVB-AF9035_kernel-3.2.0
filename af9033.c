@@ -24,13 +24,27 @@
 
 #include "dvb_frontend.h"
 #include <linux/slab.h>         /* for kzalloc/kfree */
+#include <linux/version.h>
 #include "af9033_priv.h"
 #include "af9033.h"
 #include "af9033_reg.h"
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,3,0)) || ((defined V4L2_VERSION) && (V4L2_VERSION >= 197120))
+/* all DVB frontend drivers now work directly with the DVBv5
+ * structure. This warrants that all drivers will be
+ * getting/setting frontend parameters on a consistent way, in
+ * order to avoid copying data from/to the DVBv3 structs
+ * without need.
+ */
+#define V4L2_ONLY_DVB_V5
+#endif
+
 static int af9033_debug;
 module_param_named(debug, af9033_debug, int, 0644);
 MODULE_PARM_DESC(debug, "Turn on/off frontend debugging (default:off).");
+static int af9033_snrdb;
+module_param_named(snrdb, af9033_snrdb, int, 0644);
+MODULE_PARM_DESC(snrdb, "Turn on/off SNR output as dBx10 (default:off).");
 
 struct af9033_state {
 	struct i2c_adapter *i2c;
@@ -166,7 +180,11 @@ static u32 af913_div(u32 a, u32 b, u32 x)
 	return r;
 }
 
+#ifdef V4L2_ONLY_DVB_V5
+static int af9033_set_coeff(struct af9033_state *state, u32 bw)
+#else
 static int af9033_set_coeff(struct af9033_state *state, fe_bandwidth_t bw)
+#endif
 {
 	int ret = 0;
 	u8 tmp, i = 0;
@@ -183,6 +201,13 @@ static int af9033_set_coeff(struct af9033_state *state, fe_bandwidth_t bw)
 	u16 uninitialized_var(fftindex_bfsfcw_ratio);
 	deb_info("%s: adc_clock:%d bw:%d\n", __func__,
 		state->config.adc_clock, bw);
+
+#ifdef V4L2_ONLY_DVB_V5
+#define BANDWIDTH_5_MHZ 5000000
+#define BANDWIDTH_6_MHZ 6000000
+#define BANDWIDTH_7_MHZ 7000000
+#define BANDWIDTH_8_MHZ 8000000
+#endif
 
 	switch (state->config.adc_clock) {
 	case 20156250:
@@ -642,6 +667,13 @@ static int af9033_set_coeff(struct af9033_state *state, fe_bandwidth_t bw)
 		return ret;
 	}
 
+#ifdef V4L2_ONLY_DVB_V5
+#undef BANDWIDTH_5_MHZ
+#undef BANDWIDTH_6_MHZ
+#undef BANDWIDTH_7_MHZ
+#undef BANDWIDTH_8_MHZ
+#endif
+
 	/* adc multiplier */
 	ret = af9033_read_reg(state, OFDM, api_adcx2, &tmp);
 	if (ret)
@@ -745,7 +777,7 @@ static int af9033_set_adc_ctrl(struct af9033_state *state)
 		sizeof(buf));
 }
 
-static int af9033_set_freq_ctrl(struct af9033_state *state, fe_bandwidth_t bw)
+static int af9033_set_freq_ctrl(struct af9033_state *state)
 {
 	int ret;
 	u8 buf[3], tmp;
@@ -1057,6 +1089,103 @@ error:
 	return ret;
 }
 
+#ifdef V4L2_ONLY_DVB_V5
+static int af9033_set_frontend(struct dvb_frontend *fe)
+{
+	struct dtv_frontend_properties *params = &fe->dtv_property_cache;
+	struct af9033_state *state = fe->demodulator_priv;
+	int ret;
+	u8 tmp;
+	deb_info("%s: freq:%d bw:%d\n", __func__, params->frequency,
+		params->bandwidth_hz);
+
+	state->frequency = params->frequency;
+
+	/* program tuner */
+	if (fe->ops.tuner_ops.set_params)
+		fe->ops.tuner_ops.set_params(fe);
+
+	/* program CFOE coefficients */
+	ret = af9033_set_coeff(state, params->bandwidth_hz);
+	if (ret)
+		goto error;
+
+	/* program frequency control */
+	ret = af9033_set_freq_ctrl(state);
+	if (ret)
+		goto error;
+
+	/* program bandwidth */
+	switch (params->bandwidth_hz) {
+	case 6000000:
+		tmp = 0;
+		break;
+	case 7000000:
+		tmp = 1;
+		break;
+	case 8000000:
+		tmp = 2;
+		break;
+#if 0 /* keep */
+	case 5000000:
+		tmp = 3;
+		break;
+#endif
+	default:
+		deb_info("%s: invalid bandwidth\n", __func__);
+		return -EINVAL;
+	}
+	ret = af9033_write_reg_bits(state, OFDM, g_reg_bw, reg_bw_pos,
+		reg_bw_len, tmp);
+	if (ret)
+		goto error;
+
+	/* clear easy mode flag */
+	ret = af9033_write_reg(state, OFDM, api_Training_Mode, 0x00);
+	if (ret)
+		goto error;
+
+	/* clear empty channel flag */
+	ret = af9033_write_reg(state, OFDM, api_empty_channel_status, 0x00);
+	if (ret)
+		goto error;
+
+	/* clear MPEG2 lock flag */
+	ret = af9033_write_reg_bits(state, OFDM, r_mp2if_sync_byte_locked,
+		mp2if_sync_byte_locked_pos, mp2if_sync_byte_locked_len, 0x00);
+	if (ret)
+		goto error;
+
+	/* set frequency band
+	    174 -  230 MHz VHF     band = 0x00
+	    350 -  900 MHz UHF     band = 0x01
+	   1670 - 1680 MHz L-BAND  band = 0x02
+	   otherwise               band = 0xff */
+	/* TODO: are both min/max ranges really required... */
+	if ((state->frequency >= 174000000) && (state->frequency <= 230000000))
+		tmp = 0x00; /* VHF */
+	else if ((state->frequency >= 350000000) && (state->frequency <= 900000000))
+		tmp = 0x01; /* UHF */
+	else if ((state->frequency >= 1670000000) && (state->frequency <= 1680000000))
+		tmp = 0x02; /* L-BAND */
+	else
+		tmp = 0xff;
+
+	ret = af9033_write_reg(state, OFDM, api_FreBand, tmp);
+	if (ret)
+		goto error;
+
+	/* trigger ofsm */
+	ret = af9033_write_reg(state, OFDM, api_trigger_ofsm, 0);
+	if (ret)
+		goto error;
+error:
+	if (ret)
+		deb_info("%s: failed:%d\n", __func__, ret);
+
+	return ret;
+}
+#else
 static int af9033_set_frontend(struct dvb_frontend *fe,
 	struct dvb_frontend_parameters *params)
 {
@@ -1070,7 +1199,7 @@ static int af9033_set_frontend(struct dvb_frontend *fe,
 
 	/* program tuner */
 	if (fe->ops.tuner_ops.set_params)
-		fe->ops.tuner_ops.set_params(fe);
+		fe->ops.tuner_ops.set_params(fe, params);
 
 	/* program CFOE coefficients */
 	ret = af9033_set_coeff(state, params->u.ofdm.bandwidth);
@@ -1078,7 +1207,7 @@ static int af9033_set_frontend(struct dvb_frontend *fe,
 		goto error;
 
 	/* program frequency control */
-	ret = af9033_set_freq_ctrl(state, params->u.ofdm.bandwidth);
+	ret = af9033_set_freq_ctrl(state);
 	if (ret)
 		goto error;
 
@@ -1152,6 +1281,7 @@ error:
 
 	return ret;
 }
+#endif
 
 static int af9033_get_tune_settings(struct dvb_frontend *fe,
 	struct dvb_frontend_tune_settings *fesettings)
@@ -1163,6 +1293,156 @@ static int af9033_get_tune_settings(struct dvb_frontend *fe,
 	return 0;
 }
 
+#ifdef V4L2_ONLY_DVB_V5
+static int af9033_get_frontend(struct dvb_frontend *fe)
+{
+	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
+	struct af9033_state *state = fe->demodulator_priv;
+	int ret;
+	u8 buf[8];
+	deb_info("%s\n", __func__);
+#define TRANSMISSION_MODE  (g_reg_tpsd_txmod - g_reg_tpsd_txmod)
+#define GUARD_INTERVAL     (g_reg_tpsd_gi    - g_reg_tpsd_txmod)
+#define HIERARCHY          (g_reg_tpsd_hier  - g_reg_tpsd_txmod)
+#define CONSTELLATION      (g_reg_tpsd_const - g_reg_tpsd_txmod)
+#define BANDWIDTH          (g_reg_bw         - g_reg_tpsd_txmod)
+#define PRIORITY           (g_reg_dec_pri    - g_reg_tpsd_txmod)
+#define CODE_RATE_HP       (g_reg_tpsd_hpcr  - g_reg_tpsd_txmod)
+#define CODE_RATE_LP       (g_reg_tpsd_lpcr  - g_reg_tpsd_txmod)
+
+	/* read all needed registers */
+	ret = af9033_read_regs(state, OFDM, g_reg_tpsd_txmod, buf, sizeof(buf));
+	if (ret)
+		goto error;
+
+	deb_info("%s: ", __func__);
+	debug_dump(buf, sizeof(buf), deb_info);
+
+	switch ((buf[CONSTELLATION] >> 0) & 3) {
+	case 0:
+		p->modulation = QPSK;
+		break;
+	case 1:
+		p->modulation = QAM_16;
+		break;
+	case 2:
+		p->modulation = QAM_64;
+		break;
+	}
+
+	switch ((buf[TRANSMISSION_MODE] >> 0) & 3) {
+	case 0:
+		p->transmission_mode = TRANSMISSION_MODE_2K;
+		break;
+	case 1:
+		p->transmission_mode = TRANSMISSION_MODE_8K;
+		break;
+#if 0 /* keep */
+	case 2:
+		p->transmission_mode = TRANSMISSION_MODE_4K;
+		break;
+#endif
+	}
+
+	switch ((buf[GUARD_INTERVAL] >> 0) & 3) {
+	case 0:
+		p->guard_interval = GUARD_INTERVAL_1_32;
+		break;
+	case 1:
+		p->guard_interval = GUARD_INTERVAL_1_16;
+		break;
+	case 2:
+		p->guard_interval = GUARD_INTERVAL_1_8;
+		break;
+	case 3:
+		p->guard_interval = GUARD_INTERVAL_1_4;
+		break;
+	}
+
+	switch ((buf[HIERARCHY] >> 0) & 7) {
+	case 0:
+		p->hierarchy = HIERARCHY_NONE;
+		break;
+	case 1:
+		p->hierarchy = HIERARCHY_1;
+		break;
+	case 2:
+		p->hierarchy = HIERARCHY_2;
+		break;
+	case 3:
+		p->hierarchy = HIERARCHY_4;
+		break;
+	}
+
+	switch ((buf[CODE_RATE_HP] >> 0) & 7) {
+	case 0:
+		p->code_rate_HP = FEC_1_2;
+		break;
+	case 1:
+		p->code_rate_HP = FEC_2_3;
+		break;
+	case 2:
+		p->code_rate_HP = FEC_3_4;
+		break;
+	case 3:
+		p->code_rate_HP = FEC_5_6;
+		break;
+	case 4:
+		p->code_rate_HP = FEC_7_8;
+		break;
+	case 5:
+		p->code_rate_HP = FEC_NONE;
+		break;
+	}
+
+	switch ((buf[CODE_RATE_LP] >> 0) & 7) {
+	case 0:
+		p->code_rate_LP = FEC_1_2;
+		break;
+	case 1:
+		p->code_rate_LP = FEC_2_3;
+		break;
+	case 2:
+		p->code_rate_LP = FEC_3_4;
+		break;
+	case 3:
+		p->code_rate_LP = FEC_5_6;
+		break;
+	case 4:
+		p->code_rate_LP = FEC_7_8;
+		break;
+	case 5:
+		p->code_rate_LP = FEC_NONE;
+		break;
+	}
+
+	switch ((buf[BANDWIDTH] >> 0) & 3) {
+	case 0:
+		p->bandwidth_hz = 6000000;
+		break;
+	case 1:
+		p->bandwidth_hz = 7000000;
+		break;
+	case 2:
+		p->bandwidth_hz = 8000000;
+		break;
+#if 0 /* keep */
+	case 3:
+		p->bandwidth_hz = 5000000;
+		break;
+#endif
+	}
+
+	p->inversion = INVERSION_AUTO;
+	p->frequency = state->frequency;
+
+error:
+	if (ret)
+		deb_info("%s: failed:%d\n", __func__, ret);
+
+	return ret;
+}
+#else
 static int af9033_get_frontend(struct dvb_frontend *fe,
 	struct dvb_frontend_parameters *p)
 {
@@ -1311,6 +1591,7 @@ error:
 
 	return ret;
 }
+#endif
 
 static int af9033_update_ber_ucblocks(struct dvb_frontend *fe)
 {
@@ -1427,6 +1708,9 @@ static int af9033_update_snr(struct dvb_frontend *fe)
 		}
 	}
 	deb_info("%s: snr_val:%x snr:%x\n", __func__, snr_val, state->snr);
+
+	if (len && !af9033_snrdb)
+		state->snr = (0xffff / (snr_table[len - 1].snr * 10)) * state->snr;
 
 error:
 	return ret;
@@ -1625,9 +1909,14 @@ error:
 EXPORT_SYMBOL(af9033_attach);
 
 static struct dvb_frontend_ops af9033_ops = {
+#ifdef V4L2_ONLY_DVB_V5
+	.delsys = { SYS_DVBT },
+#endif
 	.info = {
 		.name = "Afatech AF9033 DVB-T",
+#ifndef V4L2_ONLY_DVB_V5
 		.type = FE_OFDM,
+#endif
 		.frequency_min =  44250000,
 		.frequency_max = 867250000,
 		.frequency_stepsize = 62500,

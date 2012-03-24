@@ -1,4 +1,4 @@
-Driver for AF9035 dvb-t usb dongle (>=3.2.0 kernel version)
+Driver for AF9035 dvb-t usb dongle (3.2.x kernel version)
 
 for:
 
@@ -11,3 +11,8 @@ and:
    TerraTec Cinergy T Stick (ID 0ccd:0093)
    TerraTec Cinergy T Stick 2 (ID 0ccd:00aa)
    Avermedia AverTV A825 (ID 07ca:0825) 
+
+
+TESTING VERSION!!!
+
+Tested on Ubuntu 11.10 kernel 3.2.0-17

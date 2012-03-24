@@ -144,7 +144,7 @@ static int tda18218_set_params(struct dvb_frontend *fe)
 		priv->if_frequency = 3000000;
 	} else if (bw <= 7000000) {
 		LP_Fc = 1;
-		priv->if_frequency = 3500000;
+		priv->if_frequency = 4000000;
 	} else {
 		LP_Fc = 2;
 		priv->if_frequency = 4000000;
