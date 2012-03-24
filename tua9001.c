@@ -19,8 +19,19 @@
  */
 
 #include <linux/slab.h>         /* for kzalloc/kfree */
+#include <linux/version.h>
 #include "tua9001.h"
 #include "tua9001_priv.h"
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,3,0)) || ((defined V4L2_VERSION) && (V4L2_VERSION >= 197120))
+/* all DVB frontend drivers now work directly with the DVBv5
+ * structure. This warrants that all drivers will be
+ * getting/setting frontend parameters on a consistent way, in
+ * order to avoid copying data from/to the DVBv3 structs
+ * without need.
+ */
+#define V4L2_ONLY_DVB_V5
+#endif
 
 static int debug;
 module_param(debug, int, 0644);
@@ -88,6 +99,74 @@ static int tua9001_init(struct dvb_frontend *fe)
 	return ret;
 }
 
+#ifdef V4L2_ONLY_DVB_V5
+static int tua9001_set_params(struct dvb_frontend *fe)
+{
+	struct dtv_frontend_properties *params = &fe->dtv_property_cache;
+	struct tua9001_priv *priv = fe->tuner_priv;
+	int ret;
+	u16 val;
+	u32 freq;
+	u8 i;
+	struct regdesc data[2];
+
+	switch (params->bandwidth_hz) {
+#if 0
+	case 5000000:
+		val  = 0x3000;
+		break;
+#endif
+	case 6000000:
+		val  = 0x2000;
+		break;
+	case 7000000:
+		val  = 0x1000;
+		break;
+	case 8000000:
+	default:
+		val  = 0x0000;
+		break;
+	}
+
+	data[0].reg = 0x04;
+	data[0].val = val;
+
+freq = params->frequency;
+
+#define OFFSET 150000000
+freq = freq - OFFSET;
+freq  = freq/1000;
+freq  = 48 * freq;
+freq  = freq/1000;
+
+val = freq;
+
+	data[1].reg = 0x1f;
+	data[1].val = val;
+
+
+	deb_info("%s: freq:%d bw:%d freq tuner:%d val:%d\n", __func__,
+		params->frequency, params->bandwidth_hz, priv->frequency,
+		val);
+
+	if (fe->ops.i2c_gate_ctrl)
+		fe->ops.i2c_gate_ctrl(fe, 1); /* open i2c-gate */
+
+	for (i = 0; i < ARRAY_SIZE(data); i++) {
+		ret = tua9001_writereg(priv, data[i].reg, data[i].val);
+		if (ret)
+			break;
+	}
+
+	if (fe->ops.i2c_gate_ctrl)
+		fe->ops.i2c_gate_ctrl(fe, 0); /* close i2c-gate */
+
+	if (ret)
+		deb_info("%s: failed:%d\n", __func__, ret);
+
+	return ret;
+}
+#else
 static int tua9001_set_params(struct dvb_frontend *fe,
 	struct dvb_frontend_parameters *params)
 {
@@ -154,6 +233,7 @@ val = freq;
 
 	return ret;
 }
+#endif
 
 static int tua9001_get_frequency(struct dvb_frontend *fe, u32 *frequency)
 {

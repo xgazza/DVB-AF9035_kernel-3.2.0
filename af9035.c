@@ -27,7 +27,11 @@
 #include "tua9001.h"
 #include "mxl5007t.h"
 #include "tda18218.h"
-#include "linux/version.h"
+#include <linux/version.h>
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,2,0)) || ((defined V4L2_VERSION) && (V4L2_VERSION >= 196608))
+#define V4L2_REFACTORED_MFE_CODE
+#endif
 
 static int dvb_usb_af9035_debug;
 module_param_named(debug, dvb_usb_af9035_debug, int, 0644);
@@ -610,7 +614,7 @@ static int af9035_read_config(struct usb_device *udev)
 	for (i = 0; i < af9035_properties_count; i++) {
 		/* USB1.1 set smaller buffersize and disable 2nd adapter */
 		if (udev->speed == USB_SPEED_FULL) {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,2,0)
+#ifdef V4L2_REFACTORED_MFE_CODE
 			af9035_properties[i].adapter[0].fe[0].stream.u.bulk.buffersize
 #else
 			af9035_properties[i].adapter[0].stream.u.bulk.buffersize
@@ -620,7 +624,7 @@ static int af9035_read_config(struct usb_device *udev)
 			   PID-filters */
 			af9035_config.dual_mode = 0;
 		} else {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,2,0)
+#ifdef V4L2_REFACTORED_MFE_CODE
 			af9035_properties[i].adapter[0].fe[0].stream.u.bulk.buffersize
 #else
 			af9035_properties[i].adapter[0].stream.u.bulk.buffersize
@@ -803,16 +807,16 @@ static int af9035_identify_state(struct usb_device *udev,
 static int af9035_af9033_frontend_attach(struct dvb_usb_adapter *adap)
 {
 	/* attach demodulator */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,2,0)
+#ifdef V4L2_REFACTORED_MFE_CODE
 	adap->fe_adap[0].fe = dvb_attach(af9033_attach, &af9035_af9033_config[adap->id],
-#else
-	adap->fe = dvb_attach(af9033_attach, &af9035_af9033_config[adap->id],
-#endif
 		&adap->dev->i2c_adap);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,2,0)
+
 	return adap->fe_adap[0].fe == NULL ? -ENODEV : 0;
 #else
+	adap->fe = dvb_attach(af9033_attach, &af9035_af9033_config[adap->id],
+		&adap->dev->i2c_adap);
+
 	return adap->fe == NULL ? -ENODEV : 0;
 #endif
 }
@@ -884,7 +888,8 @@ static int af9035_tuner_attach(struct dvb_usb_adapter *adap)
 			ret = af9035_write_reg_bits(adap->dev, LINK, p_reg_top_gpiot2_o,
 				 reg_top_gpiot2_o_pos, reg_top_gpiot2_o_len, 1);
 		}
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,2,0)
+
+#ifdef V4L2_REFACTORED_MFE_CODE
 		ret = dvb_attach(tua9001_attach, adap->fe_adap[0].fe, &adap->dev->i2c_adap,
 #else
 		ret = dvb_attach(tua9001_attach, adap->fe, &adap->dev->i2c_adap,
@@ -941,7 +946,7 @@ static int af9035_tuner_attach(struct dvb_usb_adapter *adap)
 				1);
 		}
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,2,0)
+#ifdef V4L2_REFACTORED_MFE_CODE
 		ret = dvb_attach(mxl5007t_attach, adap->fe_adap[0].fe, &adap->dev->i2c_adap,
 #else
 		ret = dvb_attach(mxl5007t_attach, adap->fe, &adap->dev->i2c_adap,
@@ -981,7 +986,7 @@ static int af9035_tuner_attach(struct dvb_usb_adapter *adap)
                            reg_top_gpiot2_o_pos, reg_top_gpiot2_o_len, 1);
                    }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,2,0)
+#ifdef V4L2_REFACTORED_MFE_CODE
                    ret = dvb_attach(tda18218_attach, adap->fe_adap[0].fe, &adap->dev->i2c_adap,
 #else
                    ret = dvb_attach(tda18218_attach, adap->fe, &adap->dev->i2c_adap,
@@ -1050,9 +1055,9 @@ static struct dvb_usb_device_properties af9035_properties[] = {
 
 		.adapter = {
 			{
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,2,0)
-				.num_frontends = 1,
-				.fe = {{
+#ifdef V4L2_REFACTORED_MFE_CODE
+			.num_frontends = 1,
+			.fe = {{
 #endif
 				.frontend_attach =
 					af9035_af9033_frontend_attach,
@@ -1062,14 +1067,14 @@ static struct dvb_usb_device_properties af9035_properties[] = {
 					.count = 4,
 					.endpoint = 0x84,
 				},
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,2,0)
-				}},
+#ifdef V4L2_REFACTORED_MFE_CODE
+			}},
 #endif
 			},
 			{
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,2,0)
-				.num_frontends = 1,
-				.fe = {{
+#ifdef V4L2_REFACTORED_MFE_CODE
+			.num_frontends = 1,
+			.fe = {{
 #endif
 				.frontend_attach =
 					af9035_af9033_frontend_attach,
@@ -1085,8 +1090,8 @@ static struct dvb_usb_device_properties af9035_properties[] = {
 						}
 					}
 				},
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,2,0)
-				}},
+#ifdef V4L2_REFACTORED_MFE_CODE
+			}},
 #endif
 			}
 		},
