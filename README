@@ -15,4 +15,7 @@ and:
 
 TESTING VERSION!!!
 
-Tested on Ubuntu 11.10 kernel 3.2.0-17 ; Ubuntu 12.04 kernel 3.2.0-18
+Tested on Ubuntu 11.10 kernel 3.2.0-17 ; Ubuntu 12.04 kernel 3.2.0-20
+
+
+For 3.3 kernel update dvb_frontend.h file
