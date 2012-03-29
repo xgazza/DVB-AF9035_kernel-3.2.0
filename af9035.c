@@ -847,9 +847,14 @@ static struct mxl5007t_config af9035_mxl5007t_config[] = {
 	}
 };
 
-static struct tda18218_config af9035_tda18218_config = {
-        .i2c_address = 0xc0,
-        .i2c_wr_max = 17,
+static struct tda18218_config af9035_tda18218_config[] = {
+	{
+		.i2c_address = 0xc0,
+		.i2c_wr_max = 21, /* max wr bytes AF9015 I2C adap can handle at once */
+	} , {
+		.i2c_address = 0xc1,
+		.i2c_wr_max = 21, /* max wr bytes AF9015 I2C adap can handle at once */
+	}
 };
 
 static int af9035_tuner_attach(struct dvb_usb_adapter *adap)
@@ -956,7 +961,7 @@ static int af9035_tuner_attach(struct dvb_usb_adapter *adap)
 
 		break;
           case AF9033_TUNER_TDA18218:
-                  af9035_af9033_config[adap->id].tuner_address = af9035_tua9001_config[adap->id].i2c_address;
+                  af9035_af9033_config[adap->id].tuner_address = af9035_tda18218_config[adap->id].i2c_address;
                   af9035_af9033_config[adap->id].tuner_address += adap->id;
                   if (adap->id == 0) {
                   /* gpiot3 TUA9001 RESETN
@@ -991,7 +996,7 @@ static int af9035_tuner_attach(struct dvb_usb_adapter *adap)
 #else
                    ret = dvb_attach(tda18218_attach, adap->fe, &adap->dev->i2c_adap,
 #endif
-                           &af9035_tda18218_config) == NULL ? -ENODEV : 0;
+                           &af9035_tda18218_config[adap->id]) == NULL ? -ENODEV : 0;
 
                    break;
 	default:
